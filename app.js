@@ -247,6 +247,14 @@
     if(action==='startCannon')return startCannon();
   });
   app.addEventListener('change', event => { if(event.target.id==='studyCh'){ui.studyCh=Number(event.target.value);render();} });
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) window.addEventListener('load', () => {
+    let refreshedForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshedForUpdate) return;
+      refreshedForUpdate = true;
+      window.location.reload();
+    });
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
+  });
   render();
 })();

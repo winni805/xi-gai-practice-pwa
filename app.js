@@ -19,13 +19,34 @@
 
   const defaults = () => ({
     score: 0, level: 1, streak: 0, maxStreak: 0, signedDays: [], lastSignDate: '', signStreak: 0, maxSignStreak: 0,
-    achievements: {}, kmUnlocked: {}, chProgress: {}, chPractice: {}, mediumChProgress: {}, mediumChPractice: {}, essayMemorized: [], mediumEssayMemorized: [], wrong: [], preExamRecords: {}, realDone: 0, totalQ: 0, correctQ: 0
+    achievements: {}, kmUnlocked: {}, chProgress: {}, chPractice: {}, mediumChProgress: {}, mediumChPractice: {}, essayMemorized: [], mediumEssayMemorized: [], wrong: [], preExamRecords: {}, realExamRecords: {}, realDone: 0, totalQ: 0, correctQ: 0
   });
   const clone = value => JSON.parse(JSON.stringify(value));
+  const PAPER_SCORING_VERSION = 'paper-points-v1';
+  const migratePaperAttempt = attempt => {
+    if (!attempt || typeof attempt !== 'object') return null;
+    if (attempt.scoringVersion === PAPER_SCORING_VERSION) return attempt;
+    const correct = Number(attempt.correct);
+    return {
+      ...attempt,
+      score: Number.isFinite(correct) ? correct * 2 : Number(attempt.score) || 0,
+      scoringVersion: PAPER_SCORING_VERSION
+    };
+  };
+  const normalizePaperRecords = records => {
+    Object.keys(records).forEach(id => {
+      const record = records[id];
+      if (!record || typeof record !== 'object' || Array.isArray(record)) { records[id] = { history: [], lastAttempt: null }; return; }
+      record.history = Array.isArray(record.history) ? record.history.map(migratePaperAttempt).filter(Boolean) : [];
+      record.lastAttempt = migratePaperAttempt(record.lastAttempt);
+    });
+  };
   const normalize = raw => {
     const state = Object.assign(defaults(), raw || {});
     ['signedDays', 'essayMemorized', 'mediumEssayMemorized', 'wrong'].forEach(key => { if (!Array.isArray(state[key])) state[key] = []; });
-    ['achievements', 'kmUnlocked', 'chProgress', 'chPractice', 'mediumChProgress', 'mediumChPractice', 'preExamRecords'].forEach(key => { if (!state[key] || Array.isArray(state[key])) state[key] = {}; });
+    ['achievements', 'kmUnlocked', 'chProgress', 'chPractice', 'mediumChProgress', 'mediumChPractice', 'preExamRecords', 'realExamRecords'].forEach(key => { if (!state[key] || Array.isArray(state[key])) state[key] = {}; });
+    normalizePaperRecords(state.preExamRecords);
+    normalizePaperRecords(state.realExamRecords);
     return state;
   };
   const state = () => {
@@ -252,23 +273,41 @@
   }
 
   function realView() {
-    const papers = Object.entries(D.REAL_EXAMS).sort((a,b) => b[0].localeCompare(a[0]));
-    return `<main class="shell">${top('📜 历年真题')}<p class="intro">客观题支持答题卡与限时；交卷后可查看简答和材料题参考答案。</p><div class="list">${papers.map(([year,paper]) => `<button class="list-card" data-action="startReal" data-year="${year}"><h3>${esc(year)} · ${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道简答 + 1 道材料题 · 150 分钟</p></button>`).join('')}</div><button class="primary" style="margin-top:14px" data-action="randomReal">🎲 随机真题 20 题</button><section class="section essay-list"><div class="section-heading"><span>📝 历年简答 / 材料题</span></div>${papers.map(([year,paper]) => `<details><summary>${esc(year)} · 展开参考答案</summary>${paper.essays.map((essay,index)=>`<div class="answer"><b>${index+1}. ${esc(essay.q)}</b><br>${nl(essay.ans)}</div>`).join('')}<div class="answer"><b>材料题：${esc(paper.material.q)}</b><br>${nl(paper.material.ans)}</div></details>`).join('')}</section></main>`;
+    const papers = realExamPapers();
+    return `<main class="shell">${top('📜 历年真题')}<p class="intro">每套真题按完整试卷结构作答：题目显示真实卷面分值；总得分只累计单选题，主观题记录是否已答但不计入本次总分。</p><div class="list">${papers.map(paper => { const duration = Math.max(1, Math.round((paper.duration || 9000) / 60)); const record = preExamRecord(paper); const last = record.lastAttempt; const latest = last ? ` · 最近总分 ${last.score} 分` : ''; return `<article class="pre-exam-paper"><button class="list-card" data-action="startReal" data-year="${esc(paper.year)}"><h3>${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道主观题 · ${duration} 分钟${record.history.length ? ` · 已完成 ${record.history.length} 次${latest}` : ''}</p></button><button class="pre-exam-stats-trigger" data-action="showRealExamStats" data-year="${esc(paper.year)}" aria-label="查看${esc(paper.name)}答题统计">📊<span>答题统计</span></button></article>`; }).join('')}</div><button class="primary" style="margin-top:14px" data-action="randomReal">🎲 随机真题 20 题</button></main>`;
   }
 
+  const paperPoints = item => {
+    if (Number.isFinite(Number(item.points))) return Number(item.points);
+    if (item.type === 'single') return 2;
+    return /材料题|论述题/.test(item.kind || '') ? 20 : 6;
+  };
+  const autoScorePoints = item => item.type === 'single' ? paperPoints(item) : 0;
   const preExamItems = paper => [...paper.singles, ...paper.essays];
   const preExamAnswered = (item, answer) => item.type === 'single' ? Number.isInteger(answer) : answer === true;
-  const preExamRecord = paperId => {
-    const record = state().preExamRecords[paperId] || {};
+  const paperRecordKey = paper => paper.paperType === 'real' ? 'realExamRecords' : 'preExamRecords';
+  const preExamRecord = paper => {
+    const record = state()[paperRecordKey(paper)][paper.id] || {};
     return { history:Array.isArray(record.history) ? record.history : [], lastAttempt:record.lastAttempt || null };
   };
-  const writablePreExamRecord = (s, paperId) => {
-    if (!s.preExamRecords[paperId] || typeof s.preExamRecords[paperId] !== 'object' || Array.isArray(s.preExamRecords[paperId])) s.preExamRecords[paperId] = {};
-    const record = s.preExamRecords[paperId];
+  const writablePreExamRecord = (s, paper) => {
+    const records = s[paperRecordKey(paper)];
+    if (!records[paper.id] || typeof records[paper.id] !== 'object' || Array.isArray(records[paper.id])) records[paper.id] = {};
+    const record = records[paper.id];
     if (!Array.isArray(record.history)) record.history = [];
     if (!record.lastAttempt || typeof record.lastAttempt !== 'object') record.lastAttempt = null;
     return record;
   };
+  const preparePaper = (raw, paperType, extra = {}) => {
+    const cloned = clone(raw);
+    const paper = { ...cloned, ...extra, paperType };
+    paper.singles = (cloned.singles || []).map((item,index) => ({ ...item, id:item.id || [paper.id, 'single', index + 1].join('-'), type:'single', points:paperPoints({ ...item, type:'single' }) }));
+    paper.essays = (cloned.essays || []).map((item,index) => { const essay = { ...item, id:item.id || [paper.id, 'essay', index + 1].join('-'), type:'essay', kind:item.kind || '简答题' }; return { ...essay, points:paperPoints(essay) }; });
+    if (cloned.material) { const material = { ...cloned.material, id:cloned.material.id || [paper.id, 'material'].join('-'), type:'essay', kind:cloned.material.kind || '材料题' }; paper.essays.push({ ...material, points:paperPoints(material) }); }
+    return paper;
+  };
+  const preExamPapers = () => (D.PRE_EXAM_PAPERS || []).map(paper => preparePaper(paper, 'preExam'));
+  const realExamPapers = () => Object.entries(D.REAL_EXAMS || {}).sort((a,b) => b[0].localeCompare(a[0])).map(([year,paper]) => preparePaper(paper, 'real', { id:'real-exam-' + year, name:year + ' · ' + paper.name, duration:paper.duration || 150 * 60, year }));
   const formatAttemptTime = value => {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '—';
@@ -276,37 +315,37 @@
   };
   function preExamStats(paper, record) {
     const history = record.history;
-    if (!history.length) return `<section class="pre-exam-stats"><div class="pre-exam-stats-title">本卷答题统计 · 客观题自动计分</div><p class="paper-record-empty">尚无答题记录。完成交卷后，这里会保留每次客观题得分与高频错题。</p></section>`;
+    if (!history.length) return `<section class="pre-exam-stats"><div class="pre-exam-stats-title">本卷答题统计</div><p class="paper-record-empty">尚无答题记录。完成交卷后，这里会保留每次总得分与高频错题。</p></section>`;
     const wrongCounts = new Map();
     history.forEach(attempt => (attempt.wrongNumbers || []).forEach(number => wrongCounts.set(number, (wrongCounts.get(number) || 0) + 1)));
     const frequent = [...wrongCounts.entries()].filter(([,count]) => count >= 2).sort((a,b) => b[1] - a[1] || a[0] - b[0]);
     const highFrequency = frequent.length ? frequent.map(([number,count]) => `第 ${number} 题（错 ${count} 次）`).join('、') : '暂无（同一题累计错 2 次后会显示）';
-    return `<section class="pre-exam-stats"><div class="pre-exam-stats-title">本卷答题统计 · 客观题自动计分</div><div class="pre-exam-table-wrap"><table><thead><tr><th>次数</th><th>客观得分</th><th>单选</th><th>主观已答</th><th>交卷时间</th></tr></thead><tbody>${history.map(attempt => `<tr><td>第 ${attempt.attempt} 次</td><td><b>${attempt.score}</b> 分</td><td>${attempt.correct}/${attempt.objectiveTotal}</td><td>${attempt.subjectiveAnswered}/${attempt.subjectiveTotal}</td><td>${formatAttemptTime(attempt.completedAt)}</td></tr>`).join('')}</tbody></table></div><p class="frequent-wrong"><b>高频错题：</b>${highFrequency}</p></section>`;
+    return `<section class="pre-exam-stats"><div class="pre-exam-stats-title">本卷答题统计</div><div class="pre-exam-table-wrap"><table><thead><tr><th>次数</th><th>总得分</th><th>单选答对</th><th>主观已答</th><th>交卷时间</th></tr></thead><tbody>${history.map(attempt => `<tr><td>第 ${attempt.attempt} 次</td><td><b>${attempt.score}</b> 分</td><td>${attempt.correct}/${attempt.objectiveTotal}</td><td>${attempt.subjectiveAnswered}/${attempt.subjectiveTotal}</td><td>${formatAttemptTime(attempt.completedAt)}</td></tr>`).join('')}</tbody></table></div><p class="frequent-wrong"><b>高频错题：</b>${highFrequency}</p></section>`;
   }
   function preExamView() {
-    const papers = D.PRE_EXAM_PAPERS || [];
+    const papers = preExamPapers();
     if (!papers.length) return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">考前模拟卷独立于章节、随机练习与历年真题。每套卷将按完整试卷结构作答。</p><section class="empty">📝 考前模拟题库待导入。<br>导入后，模拟卷只会显示在这里。</section></main>`;
-    return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">每套卷按完整结构作答：单选题自动判分，主观题仅记录是否已答；交卷后留在本卷查看逐题答案与解析。</p><div class="list">${papers.map(paper => { const duration = Math.max(1, Math.round((paper.duration || 5400) / 60)); const record = preExamRecord(paper.id); const last = record.lastAttempt; const latest = last ? ` · 最近客观 ${last.score} 分` : ''; return `<article class="pre-exam-paper"><button class="list-card" data-action="startPreExam" data-id="${esc(paper.id)}"><h3>${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道主观题 · ${duration} 分钟${record.history.length ? ` · 已完成 ${record.history.length} 次${latest}` : ''}</p></button><button class="pre-exam-stats-trigger" data-action="showPreExamStats" data-id="${esc(paper.id)}" aria-label="查看${esc(paper.name)}答题统计">📊<span>答题统计</span></button></article>`; }).join('')}</div></main>`;
+    return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">每套卷按完整结构作答：题目显示真实卷面分值；总得分只累计单选题，主观题记录是否已答但不计入本次总分。</p><div class="list">${papers.map(paper => { const duration = Math.max(1, Math.round((paper.duration || 5400) / 60)); const record = preExamRecord(paper); const last = record.lastAttempt; const latest = last ? ` · 最近总分 ${last.score} 分` : ''; return `<article class="pre-exam-paper"><button class="list-card" data-action="startPreExam" data-id="${esc(paper.id)}"><h3>${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道主观题 · ${duration} 分钟${record.history.length ? ` · 已完成 ${record.history.length} 次${latest}` : ''}</p></button><button class="pre-exam-stats-trigger" data-action="showPreExamStats" data-id="${esc(paper.id)}" aria-label="查看${esc(paper.name)}答题统计">📊<span>答题统计</span></button></article>`; }).join('')}</div></main>`;
   }
   function showPreExamStatsDrawer(paperId) {
-    const paper = (D.PRE_EXAM_PAPERS || []).find(item => item.id === paperId);
+    const paper = preExamPapers().find(item => item.id === paperId);
     if (!paper) return toast('未找到这套考前模拟卷');
     const modal = document.createElement('div'); modal.className = 'modal-mask pre-exam-stats-mask';
-    modal.innerHTML = `<section class="modal pre-exam-stats-drawer" role="dialog" aria-modal="true" aria-labelledby="preExamStatsTitle"><div class="drawer-handle" aria-hidden="true"></div><div class="drawer-heading"><h3 id="preExamStatsTitle">${esc(paper.name)} · 答题统计</h3><button class="drawer-close" data-choice="close" aria-label="关闭答题统计">×</button></div><p class="drawer-intro">仅统计客观题得分；主观题只记录是否已答。</p>${preExamStats(paper, preExamRecord(paper.id))}<button class="secondary drawer-dismiss" data-choice="close">关闭</button></section>`;
+    modal.innerHTML = `<section class="modal pre-exam-stats-drawer" role="dialog" aria-modal="true" aria-labelledby="preExamStatsTitle"><div class="drawer-handle" aria-hidden="true"></div><div class="drawer-heading"><h3 id="preExamStatsTitle">${esc(paper.name)} · 答题统计</h3><button class="drawer-close" data-choice="close" aria-label="关闭答题统计">×</button></div><p class="drawer-intro">总得分只累计单选题；主观题显示卷面分值并记录是否已答，但不计入本次总分。</p>${preExamStats(paper, preExamRecord(paper))}<button class="secondary drawer-dismiss" data-choice="close">关闭</button></section>`;
     modal.addEventListener('click', event => { if (event.target === modal || event.target.closest('[data-choice="close"]')) modal.remove(); });
     document.body.append(modal);
   }
   function showPreExamResumeModal(paper, record) {
     const last = record.lastAttempt; const objective = `${last.correct}/${last.objectiveTotal}`; const subjective = `${last.subjectiveAnswered}/${last.subjectiveTotal}`;
     const modal = document.createElement('div'); modal.className = 'modal-mask';
-    modal.innerHTML = `<section class="modal"><h3>📝 本卷已有答题记录</h3><p>上次为第 ${last.attempt} 次作答：客观题 ${last.score} 分（${objective}），主观题已答 ${subjective}。查看上次答卷可继续逐题核对答案与解析；重新答题会清空上次逐题作答记录，但会保留历史成绩统计。</p><div class="modal-actions"><button class="secondary" data-choice="review">查看上次答卷</button><button class="primary" data-choice="restart">重新答题</button></div></section>`;
+    modal.innerHTML = `<section class="modal"><h3>📝 本卷已有答题记录</h3><p>上次为第 ${last.attempt} 次作答：总得分 ${last.score} 分（单选答对 ${objective}），主观题已答 ${subjective}。查看上次答卷可继续逐题核对答案与解析；重新答题会清空上次逐题作答记录，但会保留历史成绩统计。</p><div class="modal-actions"><button class="secondary" data-choice="review">查看上次答卷</button><button class="primary" data-choice="restart">重新答题</button></div></section>`;
     modal.addEventListener('click', event => {
       if (event.target === modal) return modal.remove();
       const choice = event.target.closest('[data-choice]')?.dataset.choice;
       if (!choice) return;
       modal.remove();
       if (choice === 'review') return openPreExamReview(paper, last);
-      update(s => { writablePreExamRecord(s, paper.id).lastAttempt = null; });
+      update(s => { writablePreExamRecord(s, paper).lastAttempt = null; });
       openNewPreExam(paper, record.history.length + 1);
     });
     document.body.append(modal);
@@ -323,22 +362,37 @@
     setView('preExamPaper');
   }
   function requestPreExamStart(paperId) {
-    const paper = (D.PRE_EXAM_PAPERS || []).find(item => item.id === paperId);
+    const paper = preExamPapers().find(item => item.id === paperId);
     if (!paper) return toast('未找到这套考前模拟卷');
-    const record = preExamRecord(paper.id);
+    const record = preExamRecord(paper);
     if (record.lastAttempt) return showPreExamResumeModal(paper, record);
     openNewPreExam(paper, record.history.length + 1);
   }
+  function requestRealExamStart(year) {
+    const paper = realExamPapers().find(item => item.year === year);
+    if (!paper) return toast('未找到这套历年真题');
+    const record = preExamRecord(paper);
+    if (record.lastAttempt) return showPreExamResumeModal(paper, record);
+    openNewPreExam(paper, record.history.length + 1);
+  }
+  function showRealExamStatsDrawer(year) {
+    const paper = realExamPapers().find(item => item.year === year);
+    if (!paper) return toast('未找到这套历年真题');
+    const modal = document.createElement('div'); modal.className = 'modal-mask pre-exam-stats-mask';
+    modal.innerHTML = `<section class="modal pre-exam-stats-drawer" role="dialog" aria-modal="true" aria-labelledby="preExamStatsTitle"><div class="drawer-handle" aria-hidden="true"></div><div class="drawer-heading"><h3 id="preExamStatsTitle">${esc(paper.name)} · 答题统计</h3><button class="drawer-close" data-choice="close" aria-label="关闭答题统计">×</button></div><p class="drawer-intro">总得分只累计单选题；主观题显示卷面分值并记录是否已答，但不计入本次总分。</p>${preExamStats(paper, preExamRecord(paper))}<button class="secondary drawer-dismiss" data-choice="close">关闭</button></section>`;
+    modal.addEventListener('click', event => { if (event.target === modal || event.target.closest('[data-choice="close"]')) modal.remove(); });
+    document.body.append(modal);
+  }
   function preExamPaperView() {
     const current = preExamSession;
-    if (!current?.items?.length) { setView('preExam', { push:false }); return ''; }
+    if (!current?.items?.length) { setView(current?.paper?.paperType === 'real' ? 'real' : 'preExam', { push:false }); return ''; }
     const item = current.items[current.idx]; const answer = current.answers[current.idx]; const isSingle = item.type === 'single'; const answeredCount = current.items.filter((question,index) => preExamAnswered(question, current.answers[index])).length;
     const singles = current.items.filter(question => question.type === 'single'); const essays = current.items.filter(question => question.type !== 'single');
     const elapsed = Math.floor((Date.now() - current.startedAt) / 1000); const left = Math.max(0, (current.paper.duration || 5400) - elapsed);
     const objectiveAnswered = singles.filter(question => preExamAnswered(question, current.answers[current.items.indexOf(question)])).length;
     const subjectiveAnswered = essays.filter(question => preExamAnswered(question, current.answers[current.items.indexOf(question)])).length;
     const card = `<section class="pre-exam-answer-card"><div class="answer-card-title">📋 答题卡　已答 ${answeredCount}/${current.items.length} · 单选 ${objectiveAnswered}/${singles.length} · 主观 ${subjectiveAnswered}/${essays.length}</div><div class="answer-grid pre-exam-grid">${current.items.map((question,index) => { const itemAnswer = current.answers[index]; let cls = `${index === current.idx ? 'current ' : ''}${preExamAnswered(question,itemAnswer) ? 'done ' : ''}${question.type === 'single' ? 'single-cell' : 'essay-cell'}`; let status = ''; let label = `第 ${index+1} 题`; if (current.submitted && question.type === 'single') { if (Number.isInteger(itemAnswer)) { const correct = questionCorrect(question,itemAnswer); cls += correct ? ' right' : ' wrong'; status = correct ? '✓' : '×'; label += correct ? '，回答正确' : '，回答错误'; } else { cls += ' unanswered'; label += '，未作答'; } } if (current.submitted && question.type !== 'single' && !preExamAnswered(question,itemAnswer)) { cls += ' unanswered'; label += '，未标记作答'; } return `<button class="${cls}" data-action="jumpPreExam" data-index="${index}" aria-label="${label}"><span class="answer-card-number">${index + 1}</span>${status ? `<span class="answer-card-status" aria-hidden="true">${status}</span>` : ''}</button>`; }).join('')}</div><p class="answer-card-note">${current.submitted ? '<span class="answer-card-legend right">✓ 正确</span><span class="answer-card-legend wrong">× 错误</span><span class="answer-card-legend unanswered">未答</span>；虚线数字为主观题。' : '蓝色为已选 / 已标记；虚线数字为主观题。'}</p></section>`;
-    const resultSummary = current.submitted ? `<section class="pre-exam-result"><b>第 ${current.attemptNumber} 次已交卷${current.timedOut ? ' · 时间到自动交卷' : ''}</b><strong>客观题 ${current.result.score} 分</strong><span>答对 ${current.result.correct}/${current.result.objectiveTotal} · 主观已答 ${current.result.subjectiveAnswered}/${current.result.subjectiveTotal}</span></section>` : '';
+    const resultSummary = current.submitted ? `<section class="pre-exam-result"><b>第 ${current.attemptNumber} 次已交卷${current.timedOut ? ' · 时间到自动交卷' : ''}</b><strong>总得分 ${current.result.score} 分</strong><span>单选答对 ${current.result.correct}/${current.result.objectiveTotal} · 主观已答 ${current.result.subjectiveAnswered}/${current.result.subjectiveTotal}</span></section>` : '';
     let content = '';
     if (isSingle) {
       const options = item.opts.map((option,index) => { let cls = ''; if (current.submitted) { if (index === item.ans) cls = 'correct'; else if (index === answer) cls = 'wrong'; } else if (index === answer) cls = 'selected'; return `<button class="option ${cls}" data-action="answerPreExam" data-index="${index}" ${current.submitted ? 'disabled' : ''}><b>${LETTERS[index]}</b><span>${esc(option)}</span></button>`; }).join('');
@@ -346,10 +400,11 @@
       content = `<div class="options">${options}</div>${explain}`;
     } else {
       const marked = preExamAnswered(item, answer);
-      content = `<div class="subjective-answer"><p>请先自行组织作答（可写在纸上或笔记本中），再标记本题是否已答。主观题不自动判分。</p>${current.submitted ? `<div class="answer"><b>参考作答</b><br>${nl(item.ans || '暂无参考作答')}</div>${item.exp ? `<div class="explain subjective-explain"><b>解析</b><br>${nl(item.exp)}</div>` : ''}<p class="subjective-review-note">请结合参考作答自行复盘。</p>` : `<button class="mark ${marked ? 'done' : ''}" data-action="togglePreExamEssay">${marked ? '✓ 已标记作答' : '标记为已作答'}</button>`}</div>`;
+      content = `<div class="subjective-answer"><p>请先自行组织作答（可写在纸上或笔记本中），再标记本题是否已答。本题卷面分值 ${paperPoints(item)} 分；本次练习不自动判分，也不计入总得分。</p>${current.submitted ? `<div class="answer"><b>参考作答</b><br>${nl(item.ans || '暂无参考作答')}</div>${item.exp ? `<div class="explain subjective-explain"><b>解析</b><br>${nl(item.exp)}</div>` : ''}<p class="subjective-review-note">请结合参考作答自行复盘。</p>` : `<button class="mark ${marked ? 'done' : ''}" data-action="togglePreExamEssay">${marked ? '✓ 已标记作答' : '标记为已作答'}</button>`}</div>`;
     }
     const kind = isSingle ? '单选题' : (item.kind || '主观题'); const nextText = current.submitted ? (current.idx === current.items.length - 1 ? '回到第 1 题' : '下一题') : (current.idx === current.items.length - 1 ? '交卷' : '下一题');
-    return `<main class="shell"><header class="topbar"><button class="back" data-action="backPreExam" aria-label="返回模拟卷">‹</button><h2>${esc(current.paper.name)}</h2><span id="preExamClock" class="clock">${current.submitted ? '已交卷' : formatTime(left)}</span></header>${resultSummary}<article class="question-card pre-exam-question"><div class="q-meta"><span class="q-type">${esc(kind)}</span>第 ${current.idx + 1} / ${current.items.length} 题${current.submitted ? ' · 已交卷' : ' · 可反复修改'}</div><p class="question">${esc(item.q)}</p>${content}</article><div class="quiz-actions"><button class="secondary" data-action="previousPreExam" ${current.idx === 0 ? 'disabled' : ''}>上一题</button><button class="primary" data-action="nextPreExam">${nextText}</button></div>${current.submitted ? `<button class="secondary pre-exam-return" data-action="backPreExam">返回本卷统计</button>` : `<button class="secondary pre-exam-submit" data-action="submitPreExam">现在交卷</button>`}${card}</main>`;
+    const backLabel = current.paper.paperType === 'real' ? '返回历年真题' : '返回考前模拟';
+    return `<main class="shell"><header class="topbar"><button class="back" data-action="backPaper" aria-label="${backLabel}">‹</button><h2>${esc(current.paper.name)}</h2><span id="preExamClock" class="clock">${current.submitted ? '已交卷' : formatTime(left)}</span></header>${resultSummary}<article class="question-card pre-exam-question"><div class="q-meta"><span class="q-type">${esc(kind)}</span>第 ${current.idx + 1} / ${current.items.length} 题 · 本题 ${paperPoints(item)} 分${current.submitted ? ' · 已交卷' : ' · 可反复修改'}</div><p class="question">${esc(item.q)}</p>${content}</article><div class="quiz-actions"><button class="secondary" data-action="previousPreExam" ${current.idx === 0 ? 'disabled' : ''}>上一题</button><button class="primary" data-action="nextPreExam">${nextText}</button></div>${current.submitted ? `<button class="secondary pre-exam-return" data-action="backPaper">${backLabel}</button>` : `<button class="secondary pre-exam-submit" data-action="submitPreExam">现在交卷</button>`}${card}</main>`;
   }
   function armPreExamTimer() {
     if (!preExamSession || preExamSession.submitted || view !== 'preExamPaper') return;
@@ -369,11 +424,11 @@
   function finishPreExam(timedOut = false) {
     const current = preExamSession; if (!current || current.submitted) return;
     const singles = current.items.filter(item => item.type === 'single'); const essays = current.items.filter(item => item.type !== 'single');
-    const correct = singles.reduce((total,item) => total + (questionCorrect(item,current.answers[current.items.indexOf(item)]) ? 1 : 0), 0); const score = singles.length ? Math.round(correct / singles.length * 100) : 0;
+    const correct = singles.reduce((total,item) => total + (questionCorrect(item,current.answers[current.items.indexOf(item)]) ? 1 : 0), 0); const score = singles.reduce((total,item) => total + (questionCorrect(item,current.answers[current.items.indexOf(item)]) ? autoScorePoints(item) : 0), 0);
     const objectiveAnswered = singles.filter(item => preExamAnswered(item,current.answers[current.items.indexOf(item)])).length; const subjectiveAnswered = essays.filter(item => preExamAnswered(item,current.answers[current.items.indexOf(item)])).length;
     const wrongNumbers = current.items.map((item,index) => item.type === 'single' && !questionCorrect(item,current.answers[index]) ? index + 1 : null).filter(Number.isInteger);
-    const summary = { attempt:current.attemptNumber, startedAt:current.startedAt, completedAt:new Date().toISOString(), timedOut:Boolean(timedOut), score, correct, objectiveTotal:singles.length, objectiveAnswered, subjectiveTotal:essays.length, subjectiveAnswered, wrongNumbers, answers:clone(current.answers) };
-    update(s => { const record = writablePreExamRecord(s, current.paper.id); record.history.push(Object.fromEntries(['attempt','completedAt','score','correct','objectiveTotal','objectiveAnswered','subjectiveTotal','subjectiveAnswered','wrongNumbers'].map(key => [key,summary[key]]))); record.lastAttempt = clone(summary); });
+    const summary = { attempt:current.attemptNumber, startedAt:current.startedAt, completedAt:new Date().toISOString(), timedOut:Boolean(timedOut), score, correct, objectiveTotal:singles.length, objectiveAnswered, subjectiveTotal:essays.length, subjectiveAnswered, wrongNumbers, answers:clone(current.answers), scoringVersion:PAPER_SCORING_VERSION };
+    update(s => { const record = writablePreExamRecord(s, current.paper); record.history.push(Object.fromEntries(['attempt','completedAt','score','correct','objectiveTotal','objectiveAnswered','subjectiveTotal','subjectiveAnswered','wrongNumbers','scoringVersion'].map(key => [key,summary[key]]))); record.lastAttempt = clone(summary); });
     preExamSession = { ...current, submitted:true, timedOut:Boolean(timedOut), result:summary };
     setView('preExamPaper', { push:false });
   }
@@ -454,16 +509,17 @@
     if(action==='jump'){session.idx=Number(target.dataset.index);return render();}
     if(action==='previous'){if(session.idx>0){session.idx--;render();}return;}
     if(action==='next'){if(!session)return;if(session.showCard){if(session.idx===session.questions.length-1){if(confirm('确定交卷吗？未作答题目将按错误计算。'))finishQuiz();}else{session.idx++;render();}}else if(!session.checked[session.idx])toast('请先选择一个答案');else if(session.idx<session.questions.length-1){session.idx++;render();}else finishQuiz();return;}
-    if(action==='startReal'){const paper=D.REAL_EXAMS[target.dataset.year];return startQuiz({title:paper.name,questions:paper.singles,mode:'real',duration:150*60,showCard:true,essays:paper.essays,material:paper.material});}
+    if(action==='startReal')return requestRealExamStart(target.dataset.year);
     if(action==='startPreExam')return requestPreExamStart(target.dataset.id);
     if(action==='showPreExamStats')return showPreExamStatsDrawer(target.dataset.id);
+    if(action==='showRealExamStats')return showRealExamStatsDrawer(target.dataset.year);
     if(action==='answerPreExam')return choosePreExamAnswer(Number(target.dataset.index));
     if(action==='togglePreExamEssay')return togglePreExamEssay();
     if(action==='jumpPreExam'){if(preExamSession){preExamSession.idx=Number(target.dataset.index);render();}return;}
     if(action==='previousPreExam'){if(preExamSession?.idx>0){preExamSession.idx--;render();}return;}
     if(action==='nextPreExam')return nextPreExam();
     if(action==='submitPreExam')return requestSubmitPreExam();
-    if(action==='backPreExam'){preExamSession=null;return setView('preExam');}
+    if(action==='backPaper'){const nextView=preExamSession?.paper?.paperType === 'real' ? 'real' : 'preExam';preExamSession=null;return setView(nextView);}
     if(action==='randomReal'){const pool=Object.values(D.REAL_EXAMS).flatMap(p=>p.singles);return startQuiz({title:'随机真题 20 题',questions:sample(pool,20),mode:'practice',duration:20*40});}
     if(action==='wrongFilter'){ui.wrongFilter=target.dataset.filter;return render();}
     if(action==='removeWrong'){const id=target.dataset.id;const q=decodeURIComponent(target.dataset.q||'');update(s=>{s.wrong=s.wrong.filter(item=>(id&&item.id!==id)||(!id&&item.q!==q));});toast('已从错题本移除');return render();}

@@ -1,4 +1,4 @@
-const CACHE = 'xigai-h5-fc7352e33ab5';
+const CACHE = 'xigai-h5-777747241236';
 const APP_SHELL = [
   './', './index.html', './styles.css', './app.js', './data.js',
   './manifest.webmanifest', './assets/icon.svg', './assets/icon-192.png', './assets/icon-512.png'

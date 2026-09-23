@@ -9,21 +9,23 @@
   let view = 'home';
   let ui = { studyMode: null, studyCh: 1, chapterDifficulty: 'easy', mediumEssayCh: null, wrongFilter: 'all', kmDetail: null };
   let session = null;
+  let preExamSession = null;
   let result = null;
   let quizTimer = null;
+  let preExamTimer = null;
   let matchGame = null;
   let timelineGame = null;
   let cannon = { game: null, canvas: null, ctx: null, frame: 0, settings: { mode: 'pass', speed: .28 } };
 
   const defaults = () => ({
     score: 0, level: 1, streak: 0, maxStreak: 0, signedDays: [], lastSignDate: '', signStreak: 0, maxSignStreak: 0,
-    achievements: {}, kmUnlocked: {}, chProgress: {}, chPractice: {}, mediumChProgress: {}, mediumChPractice: {}, essayMemorized: [], mediumEssayMemorized: [], wrong: [], realDone: 0, totalQ: 0, correctQ: 0
+    achievements: {}, kmUnlocked: {}, chProgress: {}, chPractice: {}, mediumChProgress: {}, mediumChPractice: {}, essayMemorized: [], mediumEssayMemorized: [], wrong: [], preExamRecords: {}, realDone: 0, totalQ: 0, correctQ: 0
   });
   const clone = value => JSON.parse(JSON.stringify(value));
   const normalize = raw => {
     const state = Object.assign(defaults(), raw || {});
     ['signedDays', 'essayMemorized', 'mediumEssayMemorized', 'wrong'].forEach(key => { if (!Array.isArray(state[key])) state[key] = []; });
-    ['achievements', 'kmUnlocked', 'chProgress', 'chPractice', 'mediumChProgress', 'mediumChPractice'].forEach(key => { if (!state[key] || Array.isArray(state[key])) state[key] = {}; });
+    ['achievements', 'kmUnlocked', 'chProgress', 'chPractice', 'mediumChProgress', 'mediumChPractice', 'preExamRecords'].forEach(key => { if (!state[key] || Array.isArray(state[key])) state[key] = {}; });
     return state;
   };
   const state = () => {
@@ -39,7 +41,7 @@
   const nl = value => esc(value).replace(/\n/g, '<br>');
   const toast = text => { toastBox.textContent = text; toastBox.classList.add('show'); clearTimeout(toastBox._timer); toastBox._timer = setTimeout(() => toastBox.classList.remove('show'), 2100); };
   const setView = (next, options = {}) => {
-    clearInterval(quizTimer); quizTimer = null;
+    clearInterval(quizTimer); quizTimer = null; clearInterval(preExamTimer); preExamTimer = null;
     if (view === 'cannon' && next !== 'cannon') stopCannon();
     view = next;
     if (options.push !== false) history.pushState({ view: next }, '', location.pathname + location.search);
@@ -87,7 +89,7 @@
     const earned = Object.keys(s.achievements).length;
     return `<main class="shell"><section class="hero"><div class="eyebrow">15040 · 自考刷题工具</div><h1>🎯 习概自考大冒险</h1><p class="hero-sub">习近平新时代中国特色社会主义思想概论</p><div class="stat-row"><div class="stat"><b>${s.level}·${esc(levelName)}</b><span>等级</span></div><div class="stat"><b>${s.score}</b><span>积分</span></div><div class="stat"><b>${s.streak}</b><span>连击</span></div><button class="stat" data-action="sign"><b>${signed ? '✓' : '签'}</b><span>${signed ? '已签到' : '每日签到'}</span></button></div><div class="countdown">📅 距 2026 年 10 月考试还有 ${days} 天</div></section>
       <section class="section"><div class="section-heading"><span>🎮 趣味游戏</span><small>边玩边记</small></div><div class="grid"><button class="menu featured" data-action="go" data-view="cannon"><i class="menu-icon">🎯</i><b class="menu-title">守城射击</b><span class="menu-desc">滑动炮台，射中正确选项</span><em class="badge gold">HOT</em></button><button class="menu" data-action="go" data-view="match"><i class="menu-icon">🔗</i><b class="menu-title">连连看</b><span class="menu-desc">考点配对记忆</span></button><button class="menu" data-action="go" data-view="timeline"><i class="menu-icon">📅</i><b class="menu-title">时间轴</b><span class="menu-desc">历史事件排序</span></button></div></section>
-      <section class="section"><div class="section-heading"><span>📝 刷题模式</span><small>${totalItems} 题离线题库</small></div><div class="grid"><button class="menu" data-action="go" data-view="chapters"><i class="menu-icon">🏰</i><b class="menu-title">章节闯关</b><span class="menu-desc">18 章 · 简单 / 中等梯度</span></button><button class="menu" data-action="go" data-view="practice"><i class="menu-icon">🎲</i><b class="menu-title">随机练习</b><span class="menu-desc">专项、冲刺与模拟卷</span></button><button class="menu wide" data-action="go" data-view="preExam"><i class="menu-icon">🧪</i><span><b class="menu-title">考前模拟</b><span class="menu-desc">独立模拟卷 · ${D.PRE_EXAM_PAPERS?.length || 0} 套待练</span></span><em class="badge gold">模拟</em></button><button class="menu wide" data-action="go" data-view="real"><i class="menu-icon">📜</i><span><b class="menu-title">历年真题</b><span class="menu-desc">客观题答题卡与简答参考</span></span><em class="badge">真题</em></button><button class="menu" data-action="go" data-view="wrong"><i class="menu-icon">📕</i><b class="menu-title">错题本</b><span class="menu-desc">${s.wrong.length} 道待巩固错题</span></button></div></section>
+      <section class="section"><div class="section-heading"><span>📝 刷题模式</span><small>${totalItems} 题离线题库</small></div><div class="grid"><button class="menu" data-action="go" data-view="chapters"><i class="menu-icon">🏰</i><b class="menu-title">章节闯关</b><span class="menu-desc">18 章 · 简单 / 中等梯度</span></button><button class="menu" data-action="go" data-view="practice"><i class="menu-icon">🎲</i><b class="menu-title">随机练习</b><span class="menu-desc">专项、冲刺与单选小测</span></button><button class="menu wide" data-action="go" data-view="preExam"><i class="menu-icon">🧪</i><span><b class="menu-title">考前模拟</b><span class="menu-desc">完整试卷结构 · ${D.PRE_EXAM_PAPERS?.length || 0} 套待练</span></span><em class="badge gold">模拟</em></button><button class="menu wide" data-action="go" data-view="real"><i class="menu-icon">📜</i><span><b class="menu-title">历年真题</b><span class="menu-desc">客观题答题卡与简答参考</span></span><em class="badge">真题</em></button><button class="menu" data-action="go" data-view="wrong"><i class="menu-icon">📕</i><b class="menu-title">错题本</b><span class="menu-desc">${s.wrong.length} 道待巩固错题</span></button></div></section>
       <section class="section"><div class="section-heading"><span>📖 学习模式</span><small>按自己的节奏</small></div><div class="grid"><button class="menu" data-action="go" data-view="study"><i class="menu-icon">🧠</i><b class="menu-title">背题模式</b><span class="menu-desc">单选、解析与简答</span></button><button class="menu" data-action="go" data-view="knowledge"><i class="menu-icon">🗺️</i><b class="menu-title">知识地图</b><span class="menu-desc">核心知识卡牌</span></button><button class="menu" data-action="go" data-view="achievements"><i class="menu-icon">🏆</i><b class="menu-title">我的成就</b><span class="menu-desc">已解锁 ${earned} / ${Object.keys(D.ACHIEVEMENTS).length}</span></button></div></section>${installBanner()}<button class="secondary" style="margin-top:14px" data-action="reset">🔄 重置这台手机的学习存档</button></main>`;
   }
 
@@ -199,7 +201,7 @@
   function practiceView() {
     const singleCount = D.BANK.length;
     const block = (title, text, action, type) => `<article class="mode-card"><h3>${title}</h3><p>${text}</p><button class="primary" data-action="${action}" data-type="${type}">开始练习</button></article>`;
-    return `<main class="shell">${top('🎲 随机练习与模拟卷')}<p class="intro">所有题目均来自当前离线题库；答题、错题和积分只保存在本机浏览器。</p>${block('全题库随机 20 题',`从 ${singleCount} 道单选中随机抽题，适合每天热身。`,'startPractice','20')}${block('单选专项 30 题','集中练习本课程单选题，限时 20 分钟。','startPractice','30')}${block('单选冲刺 50 题','考前连续训练，限时约 34 分钟。','startPractice','50')}<section class="section"><div class="section-heading"><span>🧾 模拟卷</span><small>答题卡模式</small></div>${block('快速小测 · 20 题','限时 20 分钟，可跳题并在答题卡中回看。','startMock','20')}${block('标准模拟卷 · 50 题','限时 50 分钟，交卷后统一评分。','startMock','50')}${block('考前全真卷 · 100 题','限时 100 分钟，模拟完整客观题训练。','startMock','100')}</section></main>`;
+    return `<main class="shell">${top('🎲 随机练习与单选小测')}<p class="intro">所有题目均来自当前离线题库；答题、错题和积分只保存在本机浏览器。需要按完整试卷结构作答时，请从首页进入“考前模拟”。</p>${block('全题库随机 20 题',`从 ${singleCount} 道单选中随机抽题，适合每天热身。`,'startPractice','20')}${block('单选专项 30 题','集中练习本课程单选题，限时 20 分钟。','startPractice','30')}${block('单选冲刺 50 题','考前连续训练，限时约 34 分钟。','startPractice','50')}<section class="section"><div class="section-heading"><span>🧾 单选模拟小测</span><small>答题卡模式</small></div>${block('快速小测 · 20 题','限时 20 分钟，可跳题并在答题卡中回看。','startMock','20')}${block('标准单选卷 · 50 题','限时 50 分钟，交卷后统一评分。','startMock','50')}${block('单选冲刺卷 · 100 题','限时 100 分钟，连续客观题训练。','startMock','100')}</section></main>`;
   }
 
   function startQuiz(config) {
@@ -207,7 +209,7 @@
     session.questions = config.questions.map(clone); session.answers = new Array(session.questions.length).fill(null); session.checked = new Array(session.questions.length).fill(false);
     setView('quiz');
   }
-  function questionCorrect(q, answer) { return Number(answer) === Number(q.ans); }
+  function questionCorrect(q, answer) { return Number.isInteger(answer) && Number(answer) === Number(q.ans); }
   function quizView() {
     if (!session?.questions?.length) { setView('home', { push:false }); return ''; }
     const q = session.questions[session.idx]; const selected = session.answers[session.idx]; const checked = session.checked[session.idx];
@@ -254,11 +256,120 @@
     return `<main class="shell">${top('📜 历年真题')}<p class="intro">客观题支持答题卡与限时；交卷后可查看简答和材料题参考答案。</p><div class="list">${papers.map(([year,paper]) => `<button class="list-card" data-action="startReal" data-year="${year}"><h3>${esc(year)} · ${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道简答 + 1 道材料题 · 150 分钟</p></button>`).join('')}</div><button class="primary" style="margin-top:14px" data-action="randomReal">🎲 随机真题 20 题</button><section class="section essay-list"><div class="section-heading"><span>📝 历年简答 / 材料题</span></div>${papers.map(([year,paper]) => `<details><summary>${esc(year)} · 展开参考答案</summary>${paper.essays.map((essay,index)=>`<div class="answer"><b>${index+1}. ${esc(essay.q)}</b><br>${nl(essay.ans)}</div>`).join('')}<div class="answer"><b>材料题：${esc(paper.material.q)}</b><br>${nl(paper.material.ans)}</div></details>`).join('')}</section></main>`;
   }
 
+  const preExamItems = paper => [...paper.singles, ...paper.essays];
+  const preExamAnswered = (item, answer) => item.type === 'single' ? Number.isInteger(answer) : answer === true;
+  const preExamRecord = paperId => {
+    const record = state().preExamRecords[paperId] || {};
+    return { history:Array.isArray(record.history) ? record.history : [], lastAttempt:record.lastAttempt || null };
+  };
+  const writablePreExamRecord = (s, paperId) => {
+    if (!s.preExamRecords[paperId] || typeof s.preExamRecords[paperId] !== 'object' || Array.isArray(s.preExamRecords[paperId])) s.preExamRecords[paperId] = {};
+    const record = s.preExamRecords[paperId];
+    if (!Array.isArray(record.history)) record.history = [];
+    if (!record.lastAttempt || typeof record.lastAttempt !== 'object') record.lastAttempt = null;
+    return record;
+  };
+  const formatAttemptTime = value => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return `${date.getFullYear()}/${String(date.getMonth()+1).padStart(2,'0')}/${String(date.getDate()).padStart(2,'0')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+  };
+  function preExamStats(paper, record) {
+    const history = record.history;
+    if (!history.length) return `<p class="paper-record-empty">尚无答题记录。完成交卷后，这里会保留每次客观题得分与高频错题。</p>`;
+    const wrongCounts = new Map();
+    history.forEach(attempt => (attempt.wrongNumbers || []).forEach(number => wrongCounts.set(number, (wrongCounts.get(number) || 0) + 1)));
+    const frequent = [...wrongCounts.entries()].filter(([,count]) => count >= 2).sort((a,b) => b[1] - a[1] || a[0] - b[0]);
+    const highFrequency = frequent.length ? frequent.map(([number,count]) => `第 ${number} 题（错 ${count} 次）`).join('、') : '暂无（同一题累计错 2 次后会显示）';
+    return `<section class="pre-exam-stats"><div class="pre-exam-stats-title">本卷答题统计 · 客观题自动计分</div><div class="pre-exam-table-wrap"><table><thead><tr><th>次数</th><th>客观得分</th><th>单选</th><th>主观已答</th><th>交卷时间</th></tr></thead><tbody>${history.map(attempt => `<tr><td>第 ${attempt.attempt} 次</td><td><b>${attempt.score}</b> 分</td><td>${attempt.correct}/${attempt.objectiveTotal}</td><td>${attempt.subjectiveAnswered}/${attempt.subjectiveTotal}</td><td>${formatAttemptTime(attempt.completedAt)}</td></tr>`).join('')}</tbody></table></div><p class="frequent-wrong"><b>高频错题：</b>${highFrequency}</p></section>`;
+  }
   function preExamView() {
     const papers = D.PRE_EXAM_PAPERS || [];
-    if (!papers.length) return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">考前模拟卷独立于章节、随机练习与历年真题。每套卷的客观题可在答题卡中作答，交卷后查看主观题参考作答。</p><section class="empty">📝 考前模拟题库待导入。<br>导入后，模拟卷只会显示在这里。</section></main>`;
-    return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">每套模拟卷独立计时、独立作答；客观题交卷后统一评分，主观题提供参考作答。</p><div class="list">${papers.map(paper => { const duration = Math.max(1, Math.round((paper.duration || 5400) / 60)); return `<button class="list-card" data-action="startPreExam" data-id="${esc(paper.id)}"><h3>${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道主观题 · ${duration} 分钟</p></button>`; }).join('')}</div></main>`;
+    if (!papers.length) return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">考前模拟卷独立于章节、随机练习与历年真题。每套卷将按完整试卷结构作答。</p><section class="empty">📝 考前模拟题库待导入。<br>导入后，模拟卷只会显示在这里。</section></main>`;
+    return `<main class="shell">${top('🧪 考前模拟')}<p class="intro">每套卷按完整结构作答：单选题自动判分，主观题仅记录是否已答；交卷后留在本卷查看逐题答案与解析。</p><div class="list">${papers.map(paper => { const duration = Math.max(1, Math.round((paper.duration || 5400) / 60)); const record = preExamRecord(paper.id); const last = record.lastAttempt; const latest = last ? ` · 最近客观 ${last.score} 分` : ''; return `<article class="pre-exam-paper"><button class="list-card" data-action="startPreExam" data-id="${esc(paper.id)}"><h3>${esc(paper.name)}</h3><p class="meta">${paper.singles.length} 道单选 + ${paper.essays.length} 道主观题 · ${duration} 分钟${record.history.length ? ` · 已完成 ${record.history.length} 次${latest}` : ''}</p></button>${preExamStats(paper, record)}</article>`; }).join('')}</div></main>`;
   }
+  function showPreExamResumeModal(paper, record) {
+    const last = record.lastAttempt; const objective = `${last.correct}/${last.objectiveTotal}`; const subjective = `${last.subjectiveAnswered}/${last.subjectiveTotal}`;
+    const modal = document.createElement('div'); modal.className = 'modal-mask';
+    modal.innerHTML = `<section class="modal"><h3>📝 本卷已有答题记录</h3><p>上次为第 ${last.attempt} 次作答：客观题 ${last.score} 分（${objective}），主观题已答 ${subjective}。查看上次答卷可继续逐题核对答案与解析；重新答题会清空上次逐题作答记录，但会保留历史成绩统计。</p><div class="modal-actions"><button class="secondary" data-choice="review">查看上次答卷</button><button class="primary" data-choice="restart">重新答题</button></div></section>`;
+    modal.addEventListener('click', event => {
+      if (event.target === modal) return modal.remove();
+      const choice = event.target.closest('[data-choice]')?.dataset.choice;
+      if (!choice) return;
+      modal.remove();
+      if (choice === 'review') return openPreExamReview(paper, last);
+      update(s => { writablePreExamRecord(s, paper.id).lastAttempt = null; });
+      openNewPreExam(paper, record.history.length + 1);
+    });
+    document.body.append(modal);
+  }
+  function openNewPreExam(paper, attemptNumber) {
+    const items = preExamItems(clone(paper));
+    preExamSession = { paper:clone(paper), items, answers:new Array(items.length).fill(null), idx:0, startedAt:Date.now(), submitted:false, attemptNumber };
+    setView('preExamPaper');
+  }
+  function openPreExamReview(paper, attempt) {
+    const items = preExamItems(clone(paper)); const answers = Array.isArray(attempt.answers) ? attempt.answers.slice(0, items.length) : [];
+    while (answers.length < items.length) answers.push(null);
+    preExamSession = { paper:clone(paper), items, answers, idx:0, startedAt:attempt.startedAt || attempt.completedAt, submitted:true, timedOut:Boolean(attempt.timedOut), attemptNumber:attempt.attempt, result:clone(attempt) };
+    setView('preExamPaper');
+  }
+  function requestPreExamStart(paperId) {
+    const paper = (D.PRE_EXAM_PAPERS || []).find(item => item.id === paperId);
+    if (!paper) return toast('未找到这套考前模拟卷');
+    const record = preExamRecord(paper.id);
+    if (record.lastAttempt) return showPreExamResumeModal(paper, record);
+    openNewPreExam(paper, record.history.length + 1);
+  }
+  function preExamPaperView() {
+    const current = preExamSession;
+    if (!current?.items?.length) { setView('preExam', { push:false }); return ''; }
+    const item = current.items[current.idx]; const answer = current.answers[current.idx]; const isSingle = item.type === 'single'; const answeredCount = current.items.filter((question,index) => preExamAnswered(question, current.answers[index])).length;
+    const singles = current.items.filter(question => question.type === 'single'); const essays = current.items.filter(question => question.type !== 'single');
+    const elapsed = Math.floor((Date.now() - current.startedAt) / 1000); const left = Math.max(0, (current.paper.duration || 5400) - elapsed);
+    const objectiveAnswered = singles.filter(question => preExamAnswered(question, current.answers[current.items.indexOf(question)])).length;
+    const subjectiveAnswered = essays.filter(question => preExamAnswered(question, current.answers[current.items.indexOf(question)])).length;
+    const card = `<section class="pre-exam-answer-card"><div class="answer-card-title">📋 答题卡　已答 ${answeredCount}/${current.items.length} · 单选 ${objectiveAnswered}/${singles.length} · 主观 ${subjectiveAnswered}/${essays.length}</div><div class="answer-grid pre-exam-grid">${current.items.map((question,index) => { const itemAnswer = current.answers[index]; let cls = `${index === current.idx ? 'current ' : ''}${preExamAnswered(question,itemAnswer) ? 'done ' : ''}${question.type === 'single' ? 'single-cell' : 'essay-cell'}`; if (current.submitted && question.type === 'single') cls += Number.isInteger(itemAnswer) ? (questionCorrect(question,itemAnswer) ? ' right' : ' wrong') : ' unanswered'; if (current.submitted && question.type !== 'single' && !preExamAnswered(question,itemAnswer)) cls += ' unanswered'; return `<button class="${cls}" data-action="jumpPreExam" data-index="${index}" aria-label="第 ${index+1} 题">${index + 1}</button>`; }).join('')}</div><p class="answer-card-note">蓝色为已选 / 已标记；灰色数字为主观题。</p></section>`;
+    const resultSummary = current.submitted ? `<section class="pre-exam-result"><b>第 ${current.attemptNumber} 次已交卷${current.timedOut ? ' · 时间到自动交卷' : ''}</b><strong>客观题 ${current.result.score} 分</strong><span>答对 ${current.result.correct}/${current.result.objectiveTotal} · 主观已答 ${current.result.subjectiveAnswered}/${current.result.subjectiveTotal}</span></section>` : '';
+    let content = '';
+    if (isSingle) {
+      const options = item.opts.map((option,index) => { let cls = ''; if (current.submitted) { if (index === item.ans) cls = 'correct'; else if (index === answer) cls = 'wrong'; } else if (index === answer) cls = 'selected'; return `<button class="option ${cls}" data-action="answerPreExam" data-index="${index}" ${current.submitted ? 'disabled' : ''}><b>${LETTERS[index]}</b><span>${esc(option)}</span></button>`; }).join('');
+      const explain = current.submitted ? `<div class="explain"><b>答案：${LETTERS[item.ans]}．${esc(item.opts[item.ans])}</b>${item.exp ? `<br>${esc(item.exp)}` : ''}</div>` : '';
+      content = `<div class="options">${options}</div>${explain}`;
+    } else {
+      const marked = preExamAnswered(item, answer);
+      content = `<div class="subjective-answer"><p>请先自行组织作答（可写在纸上或笔记本中），再标记本题是否已答。主观题不自动判分。</p>${current.submitted ? `<div class="answer"><b>参考作答</b><br>${nl(item.ans || '暂无参考作答')}${item.exp ? `<br><br>${nl(item.exp)}` : ''}</div><p class="subjective-review-note">请结合参考作答自行复盘。</p>` : `<button class="mark ${marked ? 'done' : ''}" data-action="togglePreExamEssay">${marked ? '✓ 已标记作答' : '标记为已作答'}</button>`}</div>`;
+    }
+    const kind = isSingle ? '单选题' : (item.kind || '主观题'); const nextText = current.submitted ? (current.idx === current.items.length - 1 ? '回到第 1 题' : '下一题') : (current.idx === current.items.length - 1 ? '交卷' : '下一题');
+    return `<main class="shell"><header class="topbar"><button class="back" data-action="backPreExam" aria-label="返回模拟卷">‹</button><h2>${esc(current.paper.name)}</h2><span id="preExamClock" class="clock">${current.submitted ? '已交卷' : formatTime(left)}</span></header>${resultSummary}${card}<article class="question-card pre-exam-question"><div class="q-meta"><span class="q-type">${esc(kind)}</span>第 ${current.idx + 1} / ${current.items.length} 题${current.submitted ? ' · 已交卷' : ' · 可反复修改'}</div><p class="question">${esc(item.q)}</p>${content}</article><div class="quiz-actions"><button class="secondary" data-action="previousPreExam" ${current.idx === 0 ? 'disabled' : ''}>上一题</button><button class="primary" data-action="nextPreExam">${nextText}</button></div>${current.submitted ? `<button class="secondary pre-exam-return" data-action="backPreExam">返回本卷统计</button>` : `<button class="secondary pre-exam-submit" data-action="submitPreExam">现在交卷</button>`}</main>`;
+  }
+  function armPreExamTimer() {
+    if (!preExamSession || preExamSession.submitted || view !== 'preExamPaper') return;
+    clearInterval(preExamTimer);
+    preExamTimer = setInterval(() => { if (!preExamSession || preExamSession.submitted || view !== 'preExamPaper') return; const left = Math.max(0, (preExamSession.paper.duration || 5400) - Math.floor((Date.now() - preExamSession.startedAt) / 1000)); const clock = document.querySelector('#preExamClock'); if (clock) clock.textContent = formatTime(left); if (!left) finishPreExam(true); }, 1000);
+  }
+  function choosePreExamAnswer(index) { if (!preExamSession || preExamSession.submitted) return; preExamSession.answers[preExamSession.idx] = index; render(); }
+  function togglePreExamEssay() { if (!preExamSession || preExamSession.submitted) return; const index = preExamSession.idx; preExamSession.answers[index] = !preExamAnswered(preExamSession.items[index], preExamSession.answers[index]); render(); }
+  function requestSubmitPreExam() {
+    if (!preExamSession || preExamSession.submitted) return;
+    const missingSingles = preExamSession.items.filter((item,index) => item.type === 'single' && !preExamAnswered(item,preExamSession.answers[index])).length;
+    const missingEssays = preExamSession.items.filter((item,index) => item.type !== 'single' && !preExamAnswered(item,preExamSession.answers[index])).length;
+    const missing = [missingSingles ? `${missingSingles} 道单选` : '', missingEssays ? `${missingEssays} 道主观题未标记作答` : ''].filter(Boolean).join('、');
+    const message = missing ? `还有 ${missing}。未作答的单选将计为错误，是否仍要交卷？` : '确认交卷吗？交卷后会保留本次答题记录，并可逐题查看答案与解析。';
+    if (confirm(message)) finishPreExam(false);
+  }
+  function finishPreExam(timedOut = false) {
+    const current = preExamSession; if (!current || current.submitted) return;
+    const singles = current.items.filter(item => item.type === 'single'); const essays = current.items.filter(item => item.type !== 'single');
+    const correct = singles.reduce((total,item) => total + (questionCorrect(item,current.answers[current.items.indexOf(item)]) ? 1 : 0), 0); const score = singles.length ? Math.round(correct / singles.length * 100) : 0;
+    const objectiveAnswered = singles.filter(item => preExamAnswered(item,current.answers[current.items.indexOf(item)])).length; const subjectiveAnswered = essays.filter(item => preExamAnswered(item,current.answers[current.items.indexOf(item)])).length;
+    const wrongNumbers = current.items.map((item,index) => item.type === 'single' && !questionCorrect(item,current.answers[index]) ? index + 1 : null).filter(Number.isInteger);
+    const summary = { attempt:current.attemptNumber, startedAt:current.startedAt, completedAt:new Date().toISOString(), timedOut:Boolean(timedOut), score, correct, objectiveTotal:singles.length, objectiveAnswered, subjectiveTotal:essays.length, subjectiveAnswered, wrongNumbers, answers:clone(current.answers) };
+    update(s => { const record = writablePreExamRecord(s, current.paper.id); record.history.push(Object.fromEntries(['attempt','completedAt','score','correct','objectiveTotal','objectiveAnswered','subjectiveTotal','subjectiveAnswered','wrongNumbers'].map(key => [key,summary[key]]))); record.lastAttempt = clone(summary); });
+    preExamSession = { ...current, submitted:true, timedOut:Boolean(timedOut), result:summary };
+    setView('preExamPaper', { push:false });
+  }
+  function nextPreExam() { if (!preExamSession) return; if (preExamSession.idx < preExamSession.items.length - 1) { preExamSession.idx++; return render(); } if (preExamSession.submitted) { preExamSession.idx = 0; return render(); } requestSubmitPreExam(); }
 
   function wrongView() {
     const s = state(); const filters = [['all','全部'],['single','单选']]; const list = s.wrong.filter(q => ui.wrongFilter === 'all' || q.type === ui.wrongFilter);
@@ -308,9 +419,10 @@
   function finishCannon(){const g=cannon.game;if(!g)return;const passed=g.score>=60;let earned=[];update(s=>{earned=applyAchievements(s,{game:'cannon',score:g.score});});stopCannon();toast(`${passed?'守城成功':'游戏结束'}：${g.score} 分${earned.length?'，解锁新成就！':''}`);render();}
 
   function render() {
-    const views = { home:homeView, chapters:chaptersView, mediumEssays:mediumEssayView, practice:practiceView, quiz:quizView, result:resultView, preExam:preExamView, real:realView, wrong:wrongView, study:studyView, knowledge:knowledgeView, achievements:achievementView, match:matchView, timeline:timelineView, cannon:cannonView };
+    const views = { home:homeView, chapters:chaptersView, mediumEssays:mediumEssayView, practice:practiceView, quiz:quizView, result:resultView, preExam:preExamView, preExamPaper:preExamPaperView, real:realView, wrong:wrongView, study:studyView, knowledge:knowledgeView, achievements:achievementView, match:matchView, timeline:timelineView, cannon:cannonView };
     app.innerHTML = (views[view] || homeView)();
     if (view === 'quiz') armQuizTimer();
+    if (view === 'preExamPaper') armPreExamTimer();
     if (view === 'cannon') requestAnimationFrame(setupCannon);
   }
 
@@ -335,7 +447,14 @@
     if(action==='previous'){if(session.idx>0){session.idx--;render();}return;}
     if(action==='next'){if(!session)return;if(session.showCard){if(session.idx===session.questions.length-1){if(confirm('确定交卷吗？未作答题目将按错误计算。'))finishQuiz();}else{session.idx++;render();}}else if(!session.checked[session.idx])toast('请先选择一个答案');else if(session.idx<session.questions.length-1){session.idx++;render();}else finishQuiz();return;}
     if(action==='startReal'){const paper=D.REAL_EXAMS[target.dataset.year];return startQuiz({title:paper.name,questions:paper.singles,mode:'real',duration:150*60,showCard:true,essays:paper.essays,material:paper.material});}
-    if(action==='startPreExam'){const paper=(D.PRE_EXAM_PAPERS||[]).find(item=>item.id===target.dataset.id);if(!paper)return toast('未找到这套考前模拟卷');return startQuiz({title:paper.name,questions:paper.singles,mode:'preExam',duration:paper.duration||5400,showCard:true,essays:paper.essays});}
+    if(action==='startPreExam')return requestPreExamStart(target.dataset.id);
+    if(action==='answerPreExam')return choosePreExamAnswer(Number(target.dataset.index));
+    if(action==='togglePreExamEssay')return togglePreExamEssay();
+    if(action==='jumpPreExam'){if(preExamSession){preExamSession.idx=Number(target.dataset.index);render();}return;}
+    if(action==='previousPreExam'){if(preExamSession?.idx>0){preExamSession.idx--;render();}return;}
+    if(action==='nextPreExam')return nextPreExam();
+    if(action==='submitPreExam')return requestSubmitPreExam();
+    if(action==='backPreExam'){preExamSession=null;return setView('preExam');}
     if(action==='randomReal'){const pool=Object.values(D.REAL_EXAMS).flatMap(p=>p.singles);return startQuiz({title:'随机真题 20 题',questions:sample(pool,20),mode:'practice',duration:20*40});}
     if(action==='wrongFilter'){ui.wrongFilter=target.dataset.filter;return render();}
     if(action==='removeWrong'){const id=target.dataset.id;const q=decodeURIComponent(target.dataset.q||'');update(s=>{s.wrong=s.wrong.filter(item=>(id&&item.id!==id)||(!id&&item.q!==q));});toast('已从错题本移除');return render();}
